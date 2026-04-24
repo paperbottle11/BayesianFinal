@@ -1,0 +1,159 @@
+---
+title: "Final Project"
+subtitle: "STAT 40233 - Bayesian Methods"
+author:
+  - Braedon
+  - Jayden
+  - Mallory
+  - Matthew
+format: pdf
+---
+
+```{r, eval=F}
+library(rstanarm)
+library(dplyr)
+library(bayesplot)
+library(coda)
+
+load("concrete_data.RData")
+attach(concrete_train)
+
+# Initial data check
+plot(cement, ccs)
+plot(slag, ccs)
+plot(ash, ccs)
+plot(water, ccs)
+plot(superplasticizer, ccs)
+plot(coarse_agg, ccs)
+plot(fine_agg, ccs)
+plot(age, ccs)
+
+# Apply boxcox and add column for cement/water ratio
+new_data <- concrete_train %>% 
+  mutate(ccs = ccs ^ 0.75, cement_water = cement/water)
+
+# Check boxcox transformation
+hist(ccs)
+hist(new_data$ccs)
+
+# Create 80% training and test data split
+n <- nrow(new_data)
+n_train <- n * 0.8
+n_test <- n - n_train
+train_index <- sample(1:n, n_train, replace = F)
+con_train <- new_data[train_index,]
+con_test <- new_data[-train_index,]
+
+# Linear Regression Model
+concrete_sim <- stan_glm(ccs ~ cement_water + ash + slag + age,
+                         data = con_train,
+                         family = gaussian,
+                         chains = 2, iter = 6000, warmup = 1000,
+                         seed = 303, 
+                         prior = normal(0, 0.5))
+
+summary(concrete_sim)
+concrete_sim$coefficients
+posterior_interval(concrete_sim, prob=0.95) # Check predictor significance
+
+# Check autocorrelation
+concrete_arr <- as.array(concrete_sim)
+mcmc_acf(concrete_arr, pars = c("(Intercept)","cement_water", "ash"))
+mcmc_acf(concrete_arr, pars = c("slag", "age", "sigma"))
+
+# Test PPD on test data
+concrete_post <- posterior_predict(concrete_sim, newdata = con_test)
+concrete_means <- apply(concrete_post, 2, mean)
+hist(concrete_means, xlim = c(0,30), breaks=20) # predictions
+hist(con_test$ccs, xlim = c(0,30), breaks=20) # observations
+
+# Calculate RMSE on test data
+sqrt(mean((concrete_sim$fitted.values-con_test$ccs)^2))
+
+# Run model again on full data
+concrete_sim <- stan_glm(ccs ~ cement_water + ash + slag + age, 
+                         data = new_data,
+                         family = gaussian,
+                         chains = 2, iter = 6000, warmup = 1000,
+                         seed = 303, 
+                         prior = normal(0, 0.5))
+
+summary(concrete_sim) # get n_eff
+concrete_sim$coefficients
+
+# Test convergence with Geweke
+con_mcmc <- rstan::As.mcmc.list(concrete_sim$stanfit)
+geweke.diag(con_mcmc, frac1=0.1, frac2=0.5)
+
+# Gelman
+rhat(concrete_sim)
+
+
+# Submission Data
+concrete_post <- posterior_predict(concrete_sim)
+prediction_means <- colMeans(concrete_post)
+prediction_intervals <- posterior_interval(concrete_post, prob = 0.95)
+
+```
+
+Chosen Model Formula: Cement/Water ratio + Boxcox, no thinning, then remove insignificant predictors
+
+Default priors, rmse = 6.864544
+
+(Intercept)  -1.42727358 0.46924066
+cement_water  5.74355019 6.55091549
+ash           0.02401431 0.03250394
+slag          0.02400805 0.03010860
+age           0.03098522 0.03837655
+sigma         3.12348397 3.43969950
+
+
+Prior = normal(0, 1), rmse = 6.770818
+
+(Intercept)  -0.91190703 0.98479014
+cement_water  5.51328671 6.30318305
+ash           0.02281480 0.03143361
+slag          0.02320013 0.02944707
+age           0.03074514 0.03825042
+sigma         3.12723910 3.44685123
+
+
+Prior = normal(0, 10), rmse = 6.863457
+
+(Intercept) -1.40309904 0.46893694
+cement_water  5.75399746 6.54177679
+ash           0.02392273 0.03241529
+slag          0.02404288 0.03017307
+age           0.03098629 0.03846469
+sigma         3.12580573 3.44449065
+
+
+Prior = normal(0, 0.5), rmse = 6.548008 <- Best RMSE
+
+(Intercept)  1.03013077 3.03753983  <- Now it's significant!
+cement_water 4.53321608 5.35057759
+ash          0.01705192 0.02665150
+slag         0.01935043 0.02630400
+age          0.03141275 0.04041018
+sigma        3.13347090 3.50895293
+
+
+After running best model on full data:
+
+Coefficients:
+(Intercept) cement_water          ash         slag          age 
+ 1.38547921   5.26805014   0.02419109   0.02433200   0.03374016 
+
+              n_eff
+(Intercept)   5324
+cement_water  5975
+ash           8185
+slag          9509
+age           13364
+sigma         6922
+mean_PPD      8759
+log-posterior 4883
+
+Geweke Test - Converged
+Gelman Test - Almost perfect convergence (each was barely below 1)
+Most significant predictor = cement/water ratio, has largest beta
