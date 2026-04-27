@@ -29,12 +29,13 @@ plot(fine_agg, ccs)
 plot(age, ccs)
 
 # Apply boxcox and add column for cement/water ratio
+boxcox <- 0.75
 new_data <- concrete_train %>% 
-  mutate(ccs = ccs ^ 0.75, cement_water = cement/water)
+  mutate(ccs = ccs ^ boxcox, cement_water = cement/water)
 
 # Check boxcox transformation
-hist(ccs)
-hist(new_data$ccs)
+hist(ccs, main="Distribution of CCS")
+hist(new_data$ccs, main="Distribution of CCS after Box-Cox Tranformation")
 
 # Create 80% training and test data split
 n <- nrow(new_data)
@@ -91,8 +92,8 @@ rhat(concrete_sim)
 
 # Submission Data
 concrete_post <- posterior_predict(concrete_sim)
-prediction_means <- colMeans(concrete_post)
-prediction_intervals <- posterior_interval(concrete_post, prob = 0.95)
+prediction_means <- colMeans(concrete_post)^(1/boxcox)  # Reverse boxcox
+prediction_intervals <- posterior_interval(concrete_post, prob = 0.95)^(1/boxcox)
 
 ```
 
