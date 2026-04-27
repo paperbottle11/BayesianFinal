@@ -51,7 +51,7 @@ concrete_sim <- stan_glm(ccs ~ cement_water + ash + slag + age,
                          family = gaussian,
                          chains = 2, iter = 6000, warmup = 1000,
                          seed = 303, 
-                         prior = normal(0, 0.5))
+                         prior = normal(0, 10))
 
 summary(concrete_sim)
 concrete_sim$coefficients
@@ -69,7 +69,7 @@ hist(concrete_means, xlim = c(0,30), breaks=20) # predictions
 hist(con_test$ccs, xlim = c(0,30), breaks=20) # observations
 
 # Calculate RMSE on test data
-sqrt(mean((concrete_sim$fitted.values-con_test$ccs)^2))
+sqrt(mean((concrete_means-con_test$ccs)^2))
 
 # Run model again on full data
 concrete_sim <- stan_glm(ccs ~ cement_water + ash + slag + age, 
@@ -91,15 +91,17 @@ rhat(concrete_sim)
 
 
 # Submission Data
-concrete_post <- posterior_predict(concrete_sim)
-prediction_means <- colMeans(concrete_post)^(1/boxcox)  # Reverse boxcox
-prediction_intervals <- posterior_interval(concrete_post, prob = 0.95)^(1/boxcox)
+concrete_test <- concrete_test[, colnames(concrete_test) != 'ccs'] %>% 
+                    mutate(cement_water = cement/water)
+concrete_post <- posterior_predict(concrete_sim, newdata=concrete_test)
+post_mean <- colMeans(concrete_post)^(1/boxcox)  # Reverse boxcox
+post_int <- posterior_interval(concrete_post, prob = 0.95)^(1/boxcox)
 
 ```
 
 Chosen Model Formula: Cement/Water ratio + Boxcox, no thinning, then remove insignificant predictors
 
-Default priors, rmse = 6.864544
+Default priors, rmse = 3.363549
 
 (Intercept)  -1.42727358 0.46924066
 cement_water  5.74355019 6.55091549
@@ -109,7 +111,7 @@ age           0.03098522 0.03837655
 sigma         3.12348397 3.43969950
 
 
-Prior = normal(0, 1), rmse = 6.770818
+Prior = normal(0, 1), rmse = 3.397643
 
 (Intercept)  -0.91190703 0.98479014
 cement_water  5.51328671 6.30318305
@@ -119,7 +121,7 @@ age           0.03074514 0.03825042
 sigma         3.12723910 3.44685123
 
 
-Prior = normal(0, 10), rmse = 6.863457
+Prior = normal(0, 10), rmse = 3.371432
 
 (Intercept) -1.40309904 0.46893694
 cement_water  5.75399746 6.54177679
@@ -129,7 +131,7 @@ age           0.03098629 0.03846469
 sigma         3.12580573 3.44449065
 
 
-Prior = normal(0, 0.5), rmse = 6.548008 <- Best RMSE
+Prior = normal(0, 0.5), rmse = 3.347034 <- Best RMSE
 
 (Intercept)  1.03013077 3.03753983  <- Now it's significant!
 cement_water 4.53321608 5.35057759
