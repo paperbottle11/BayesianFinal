@@ -14,6 +14,7 @@ library(rstanarm)
 library(dplyr)
 library(bayesplot)
 library(coda)
+library(ggplot2)
 
 load("concrete_data.RData")
 attach(concrete_train)
@@ -34,8 +35,8 @@ new_data <- concrete_train %>%
   mutate(ccs = ccs ^ boxcox, cement_water = cement/water)
 
 # Check boxcox transformation
-hist(ccs, main="Distribution of CCS")
-hist(new_data$ccs, main="Distribution of CCS after Box-Cox Tranformation")
+hist(ccs, main="Distribution of CCS", xlab="CCS (MPa)")
+hist(new_data$ccs, main="Distribution of CCS after Box-Cox Tranformation", xlab="CCS (MPa)")
 
 # Create 80% training and test data split
 n <- nrow(new_data)
@@ -51,7 +52,7 @@ concrete_sim <- stan_glm(ccs ~ cement_water + ash + slag + age,
                          family = gaussian,
                          chains = 2, iter = 6000, warmup = 1000,
                          seed = 303, 
-                         prior = normal(0, 10))
+                         prior = normal(0, 0.5))
 
 summary(concrete_sim)
 concrete_sim$coefficients
@@ -72,12 +73,13 @@ hist(con_test$ccs, xlim = c(0,30), breaks=20) # observations
 sqrt(mean((concrete_means-con_test$ccs)^2))
 
 # Run model again on full data
-concrete_sim <- stan_glm(ccs ~ cement_water + ash + slag + age, 
-                         data = new_data,
-                         family = gaussian,
-                         chains = 2, iter = 6000, warmup = 1000,
-                         seed = 303, 
-                         prior = normal(0, 0.5))
+concrete_sim <-
+  stan_glm(ccs ~ cement_water + ash + slag + age, 
+           data = new_data,
+           family = gaussian,
+           chains = 2, iter = 6000, warmup = 1000,
+           seed = 303, 
+           prior = normal(0, 0.5))
 
 summary(concrete_sim) # get n_eff
 concrete_sim$coefficients
@@ -96,6 +98,27 @@ concrete_test <- concrete_test[, colnames(concrete_test) != 'ccs'] %>%
 concrete_post <- posterior_predict(concrete_sim, newdata=concrete_test)
 post_mean <- colMeans(concrete_post)^(1/boxcox)  # Reverse boxcox
 post_int <- posterior_interval(concrete_post, prob = 0.95)^(1/boxcox)
+
+# Results
+load("concrete_data_full.RData")
+rmse <- sqrt(mean((concrete_test$ccs - post_mean)**2))
+
+plot_data <- data.frame(
+  true_values = concrete_test$ccs,
+  predicted_values = post_mean,
+  lower = post_int[,1],
+  upper = post_int[, 2]
+)
+
+ggplot(plot_data, aes(x = true_values, y = predicted_values)) +
+  geom_point(color = "blue") +
+  geom_errorbar(aes(ymin = lower, ymax = upper),
+                alpha = 0.3, width = 0.2) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "True vs. Predicted CCS with 95% CI",
+       x = "True CCS (MPa)",
+       y = "Predicted CCS (MPa)") +
+  theme_minimal()
 
 ```
 
@@ -144,6 +167,7 @@ sigma        3.13347090 3.50895293
 After running best model on full data:
 
 Coefficients:
+
 (Intercept) cement_water          ash         slag          age 
  1.38547921   5.26805014   0.02419109   0.02433200   0.03374016 
 
@@ -160,3 +184,7 @@ log-posterior 4883
 Geweke Test - Converged
 Gelman Test - Almost perfect convergence (each was barely below 1)
 Most significant predictor = cement/water ratio, has largest beta
+
+Results from Dr. Majumder:
+RMSE = 11.0743
+Interval Score = 1.1757
