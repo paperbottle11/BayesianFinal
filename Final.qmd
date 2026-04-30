@@ -2,10 +2,10 @@
 title: "Final Project"
 subtitle: "STAT 40233 - Bayesian Methods"
 author:
-  - Braedon
-  - Jayden
-  - Mallory
-  - Matthew
+  - Braedon Mulder
+  - Jayden Patel
+  - Mallory Fortner
+  - Matthew Martinez
 format: pdf
 ---
 
@@ -35,8 +35,8 @@ new_data <- concrete_train %>%
   mutate(ccs = ccs ^ boxcox, cement_water = cement/water)
 
 # Check boxcox transformation
-hist(ccs, main="Distribution of CCS", xlab="CCS (MPa)")
-hist(new_data$ccs, main="Distribution of CCS after Box-Cox Tranformation", xlab="CCS (MPa)")
+hist(ccs)
+hist(new_data$ccs)
 
 # Create 80% training and test data split
 n <- nrow(new_data)
@@ -52,7 +52,7 @@ concrete_sim <- stan_glm(ccs ~ cement_water + ash + slag + age,
                          family = gaussian,
                          chains = 2, iter = 6000, warmup = 1000,
                          seed = 303, 
-                         prior = normal(0, 0.5))
+                         prior = normal(0, 10))
 
 summary(concrete_sim)
 concrete_sim$coefficients
@@ -63,13 +63,9 @@ concrete_arr <- as.array(concrete_sim)
 mcmc_acf(concrete_arr, pars = c("(Intercept)","cement_water", "ash"))
 mcmc_acf(concrete_arr, pars = c("slag", "age", "sigma"))
 
-# Test PPD on test data
-concrete_post <- posterior_predict(concrete_sim, newdata = con_test)
-concrete_means <- apply(concrete_post, 2, mean)
-hist(concrete_means, xlim = c(0,30), breaks=20) # predictions
-hist(con_test$ccs, xlim = c(0,30), breaks=20) # observations
-
 # Calculate RMSE on test data
+concrete_post <- posterior_predict(concrete_sim, newdata = con_test)
+concrete_means <- colMeans(concrete_post)
 sqrt(mean((concrete_means-con_test$ccs)^2))
 
 # Run model again on full data
@@ -83,6 +79,7 @@ concrete_sim <-
 
 summary(concrete_sim) # get n_eff
 concrete_sim$coefficients
+concrete_sim$coefficients^(1/boxcox) # invert boxcox
 
 # Test convergence with Geweke
 con_mcmc <- rstan::As.mcmc.list(concrete_sim$stanfit)
@@ -96,13 +93,11 @@ rhat(concrete_sim)
 concrete_test <- concrete_test[, colnames(concrete_test) != 'ccs'] %>% 
                     mutate(cement_water = cement/water)
 concrete_post <- posterior_predict(concrete_sim, newdata=concrete_test)
-post_mean <- colMeans(concrete_post)^(1/boxcox)  # Reverse boxcox
+post_mean <- colMeans(concrete_post)^(1/boxcox)
 post_int <- posterior_interval(concrete_post, prob = 0.95)^(1/boxcox)
 
 # Results
 load("concrete_data_full.RData")
-rmse <- sqrt(mean((concrete_test$ccs - post_mean)**2))
-
 plot_data <- data.frame(
   true_values = concrete_test$ccs,
   predicted_values = post_mean,

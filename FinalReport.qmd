@@ -1,0 +1,259 @@
+---
+title: "Using Bayesian Linear Regression to Predict Concrete Strength"
+subtitle: "STAT 40233 - Bayesian Methods"
+format: pdf
+header-includes: |
+  \makeatletter
+  \g@addto@macro\@maketitle{%
+    \vspace{-5em}
+    \par\centering
+    {\small
+    \textbf{Braedon Mulder}: writing (reviewing and editing), methodology, software, formal analysis, presentation. \textbf{Jayden Patel}: writing (original draft, reviewing, and editing), software, formal analysis, visualization. \textbf{Mallory Fortner}: writing (original draft, reviewing and editing), methodology, visualization. \textbf{Matthew Martinez}: writing (reviewing and editing), methodology, formal analysis, presentation.
+    \par}
+  }
+  \makeatother
+---
+
+# 1. Data and Model Description
+
+The training dataset used in our analysis consisted of 800 samples of concrete compressive strength (CCS), measured in MPa, which was used as the primary performance metric for concrete strength. For each sample, there were 8 continuous covariates measured in $kg/m^3$: cement, blast furnace slag, fly ash, water, superplasticizer, coarse aggregate, fine aggregate, and age (measured in days). 
+
+A key factor in the strength of concrete is the ratio between the amount of cement and water used, as a higher ratio leads to a lower porosity in the hardened cement paste and increased compressive strength. Using this information, the cement and water covariates were engineered into a single feature, and this ratio had a stronger linear correlation with the response variable than either factor did separately. Fly ash, blast furnace slag, and age all appeared to be moderate positive predictors while superplasticizer, coarse aggregate, and fine aggregate all showed weak correlations and issues with homoscedasticity. 
+
+Initial observations showed a right-skew in the distribution of CCS samples (Figure 1.1).  Since normality of the response variable is assumed for linear regression, a box-cox transformation of $\lambda=0.75$ was applied. This resulted in a distribution closely resembling a symmetric, normal distribution that satisfies the conditions of linear regression (Figure 1.2). All covariates were also examined for outliers, of which no significant ones were found. 
+
+```{r, echo=F, message=F, warning=F, fig.width=5, fig.height=3, fig.align='center'}
+library(ggplot2)
+library(dplyr)
+load("concrete_data.RData")
+
+boxcox <- 0.75
+new_data <- concrete_train %>% 
+  mutate(ccs = ccs ^ boxcox, cement_water = cement/water)
+
+ggplot(concrete_train, aes(x = ccs)) +
+  geom_histogram(bins = 20, fill = "steelblue", color = "white") +
+  labs(
+    x = "CCS (MPa)",
+    y = "Frequency",
+    caption = "Figure 1.1: Distribution of Raw CCS"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.text.align = 1,
+    plot.caption.position = "plot",
+    plot.caption = element_text(hjust = 0.5, size = 11, margin = margin(t=15)),
+    axis.title = element_text(size = 9)
+  )
+
+ggplot(new_data, aes(x = ccs)) +
+  geom_histogram(bins = 20, fill = "steelblue", color = "white") +
+  labs(
+    x = "CCS (MPa)",
+    y = "Frequency",
+    caption = "Figure 1.2: Distribution of Transformed CCS"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.text.align = 1,
+    plot.caption.position = "plot",
+    plot.caption = element_text(hjust = 0.5, size = 11, margin = margin(t=15)),
+    axis.title = element_text(size = 9)
+  )
+```
+
+After initial fitting showed superplasticizer, coarse aggregate, and fine aggregate being insignificant, the final model was specified with a formula using the cement-to-water ratio, ash, slag, and age covariates (Listing 1). It was fitted using the rstanarm library and consisted of 2 chains with 6000 iterations each and a warm-up of 1000. After fitting, the model did not show signs of significant autocorrelation, so no thinning was applied.
+
+```{.r #lst-final-model lst-cap="Final Model"}
+concrete_sim <-
+  stan_glm(ccs ~ cement_water + ash + slag + age, 
+           data = concrete_data,
+           family = gaussian,
+           chains = 2, iter = 6000, warmup = 1000,
+           seed = 303, 
+           prior = normal(0, 0.5))
+```
+
+# 2. Assessing Model Fit
+
+Alternative formulations explored included retaining cement and water as separate predictors, models with other interaction ratios, and models without the box-cox transformation.  In all cases, the cement-to-water ratio with the box-cox transformation procured lower RMSE and more reliable posterior predictive checks.
+
+To assess prior sensitivity, four distributions were evaluated to determine the most effective model:  
+Default, autoscaled prior (rstanarm default)  
+Normal(0, 10^2^) - vague  
+Normal(0, 1^2^) - moderately vague  
+Normal(0, 0.5^2^) - precise  
+
+The prior on sigma was left as the default from rstanarm (exponential). The final prior selection was guided by RMSE on an 80% train/test validation data split.  
+
+Posterior means for the slope parameters were mostly stable across all priors except the precise one, indicating that the likelihood dominates the PPD for those parameters, and the data is sufficiently informative. However, the intercept showed sensitivity by having a significant credible interval only with the precise prior. The precise prior also had the best RMSE of 3.347, which led to it being selected for further analysis and making predictions. 
+
+Convergence was assessed using the Gelman-Rubin test statistic and Geweke diagnostic. All parameters in the final model had perfect Gelman-Rubin $\hat{R}$ values, indicating near perfect convergence across chains. Additionally, the Geweke z-scores were within the $\pm1.96$ threshold for all parameters, confirming the chains’ convergence.  The effective samples size (ESS) for each parameter easily surpassed the recommended threshold of 1,000, reflecting efficient sampling behavior and ensuring reliable posterior summaries. 
+
+# 3. Interpretation of Results
+
+The final model was refitted on the complete training dataset, and each predictor continued to be significant. Of the predictors, the cement-to-water ratio was the most significant with a coefficient of 5.27. This means that for every one unit increase in the ratio, the transformed CCS increases by approximately 5.27 units. In other words, the predicted CCS increases by about 9.17 MPa for every one unit increase in the cement-to-water ratio.  All other covariates had positive coefficients, suggesting that each has a positive effect on the strength of concrete.
+
+| Parameter      | Transformed | Raw (MPa)  |
+|----------------|-------------|------------|
+| (Intercept)    | 1.38547921  | 1.54454305 |
+| cement_water   | 5.26805014  | 9.16642241 |
+| ash            | 0.02419109  | 0.00699639 |
+| slag           | 0.02433200  | 0.00705078 |
+| age            | 0.03374016  | 0.01090259 |
+
+: Coefficients of Final Model
+
+# 4. Prediction for the Test Set
+
+Predictions for the test set were created using the code in Listing 2. Each posterior mean represents the average predicted value for a data point, and the posterior intervals give the 95% CI for each. Using these outputs, the final RMSE of the model was 11.073 with an interval score of 1.176 (visualized in Figure 2.1), which contrasts greatly from our initial testing.
+
+```{.r #lst-prediction-code lst-cap="Creating Predictions for Test Set"}
+concrete_post <- posterior_predict(concrete_sim, newdata=concrete_test)
+post_mean <- colMeans(concrete_post)^(1/boxcox)
+post_int <- posterior_interval(concrete_post, prob = 0.95)^(1/boxcox)
+```
+
+```{r, echo=F, message=F, warning=F, fig.width=7, fig.height=4, fig.align='center'}
+load("40233_Group_1.RData")
+load("concrete_data_full.RData")
+
+plot_data <- data.frame(
+  true_values = concrete_test$ccs,
+  predicted_values = post_mean,
+  lower = post_int[,1],
+  upper = post_int[, 2]
+)
+
+ggplot(plot_data, aes(x = true_values, y = predicted_values)) +
+  geom_point(color = "blue") +
+  geom_errorbar(aes(ymin = lower, ymax = upper),
+                alpha = 0.3, width = 0.2) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "True CCS (MPa)",
+       y = "Predicted CCS (MPa)",
+       caption = "Figure 2.1: True vs. Predicted CCS with 95% CI") +
+  theme_minimal() +
+  theme(
+    legend.text.align = 1,
+    plot.caption.position = "plot",
+    plot.caption = element_text(hjust = 0.5, size = 12, margin = margin(t=15)),
+    axis.title = element_text(size = 10)
+  )
+```
+
+# 5. Conclusion
+
+As the research suggested, the cement-to-water ratio was a significant predictor of the strength of concrete.  Other significant predictors were found to be fly ash, slag, and the age in days.  However, these were the only covariates found after the box-cox transformation, which could have led to different results if CCS was not transformed.  This was also found to be the source of the error and misinterpretation of the analysis.  During initial testing, the inverse box-cox transformation was not applied to the prediction and true values before calculating the RMSE, which led to it being a measure of error on the transformed values and not on the raw values.  Additionally, the nature of the box-cox transformation inflates the error of the model, and the selection of a precise prior centered at zero for the cement-to-water ratio may have caused the model to underestimate its value. In the future, the analysis can be improved by correctly implementing the box-cox transformation, reverting it at the right stages, and selecting a prior mean and variance appropriate for each parameter separately.
+
+
+{{< pagebreak >}}
+
+# 6. R Code Appendix
+```{r, eval=F}
+library(rstanarm)
+library(dplyr)
+library(bayesplot)
+library(coda)
+library(ggplot2)
+
+load("concrete_data.RData")
+attach(concrete_train)
+
+# Initial data check
+plot(cement, ccs)
+plot(slag, ccs)
+plot(ash, ccs)
+plot(water, ccs)
+plot(superplasticizer, ccs)
+plot(coarse_agg, ccs)
+plot(fine_agg, ccs)
+plot(age, ccs)
+
+# Apply boxcox and add column for cement/water ratio
+boxcox <- 0.75
+new_data <- concrete_train %>% 
+  mutate(ccs = ccs ^ boxcox, cement_water = cement/water)
+
+# Check boxcox transformation
+hist(ccs)
+hist(new_data$ccs)
+
+# Create 80% training and test data split
+n <- nrow(new_data)
+n_train <- n * 0.8
+n_test <- n - n_train
+train_index <- sample(1:n, n_train, replace = F)
+con_train <- new_data[train_index,]
+con_test <- new_data[-train_index,]
+
+# Linear Regression Model
+concrete_sim <- stan_glm(ccs ~ cement_water + ash + slag + age,
+                         data = con_train,
+                         family = gaussian,
+                         chains = 2, iter = 6000, warmup = 1000,
+                         seed = 303, 
+                         prior = normal(0, 10))
+
+summary(concrete_sim)
+concrete_sim$coefficients
+posterior_interval(concrete_sim, prob=0.95) # Check predictor significance
+
+# Check autocorrelation
+concrete_arr <- as.array(concrete_sim)
+mcmc_acf(concrete_arr, pars = c("(Intercept)","cement_water", "ash"))
+mcmc_acf(concrete_arr, pars = c("slag", "age", "sigma"))
+
+# Calculate RMSE on test data
+concrete_post <- posterior_predict(concrete_sim, newdata = con_test)
+concrete_means <- colMeans(concrete_post)
+sqrt(mean((concrete_means-con_test$ccs)^2))
+
+# Run model again on full data
+concrete_sim <-
+  stan_glm(ccs ~ cement_water + ash + slag + age, 
+           data = new_data,
+           family = gaussian,
+           chains = 2, iter = 6000, warmup = 1000,
+           seed = 303, 
+           prior = normal(0, 0.5))
+
+summary(concrete_sim) # get n_eff
+concrete_sim$coefficients
+concrete_sim$coefficients^(1/boxcox) # invert boxcox
+
+# Test convergence with Geweke
+con_mcmc <- rstan::As.mcmc.list(concrete_sim$stanfit)
+geweke.diag(con_mcmc, frac1=0.1, frac2=0.5)
+
+# Gelman
+rhat(concrete_sim)
+
+
+# Submission Data
+concrete_test <- concrete_test[, colnames(concrete_test) != 'ccs'] %>% 
+                    mutate(cement_water = cement/water)
+concrete_post <- posterior_predict(concrete_sim, newdata=concrete_test)
+post_mean <- colMeans(concrete_post)^(1/boxcox)
+post_int <- posterior_interval(concrete_post, prob = 0.95)^(1/boxcox)
+
+# Results
+load("concrete_data_full.RData")
+plot_data <- data.frame(
+  true_values = concrete_test$ccs,
+  predicted_values = post_mean,
+  lower = post_int[,1],
+  upper = post_int[, 2]
+)
+
+ggplot(plot_data, aes(x = true_values, y = predicted_values)) +
+  geom_point(color = "blue") +
+  geom_errorbar(aes(ymin = lower, ymax = upper),
+                alpha = 0.3, width = 0.2) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "True vs. Predicted CCS with 95% CI",
+       x = "True CCS (MPa)",
+       y = "Predicted CCS (MPa)") +
+  theme_minimal()
+
+```
